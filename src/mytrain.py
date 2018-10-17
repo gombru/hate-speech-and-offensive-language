@@ -21,11 +21,17 @@ from sklearn.pipeline import Pipeline
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-df = pd.read_csv("../data/labeled_data.csv")
+# df = pd.read_csv("../data/labeled_data.csv")
+df = pd.read_csv("../data/MMHS10K_data.csv")
+df_test = pd.read_csv("../data/MMHS10K_test_data.csv")
+
+out_file = open('../../../datasets/HateSPic/HateSPic/davison/MMHS10K_v2mm_testScores.txt','w')
 df.describe()
 df.columns
 df['class'].hist()
 tweets=df.tweet
+tweets_test=df_test.tweet
+
 
 # Feature generation
 stopwords=stopwords = nltk.corpus.stopwords.words("english")
@@ -83,6 +89,8 @@ vectorizer = TfidfVectorizer(
 
 #Construct tfidf matrix and get relevant scores
 tfidf = vectorizer.fit_transform(tweets).toarray()
+tfidf_test = vectorizer.transform(tweets_test).toarray()
+
 vocab = {v:i for i, v in enumerate(vectorizer.get_feature_names())}
 idf_vals = vectorizer.idf_
 idf_dict = {i:idf_vals[i] for i in vocab.values()} #keys are indices; values are IDF scores
@@ -95,6 +103,15 @@ for t in tweets:
     tag_list = [x[1] for x in tags]
     tag_str = " ".join(tag_list)
     tweet_tags.append(tag_str)
+
+#Get POS tags for tweets and save as a string
+tweet_tags_test = []
+for t in tweets_test:
+    tokens = basic_tokenize(preprocess(t))
+    tags = nltk.pos_tag(tokens)
+    tag_list = [x[1] for x in tags]
+    tag_str = " ".join(tag_list)
+    tweet_tags_test.append(tag_str)
 
 #We can use the TFIDF vectorizer to get a token matrix for the POS tags
 pos_vectorizer = TfidfVectorizer(
@@ -114,6 +131,8 @@ pos_vectorizer = TfidfVectorizer(
 
 #Construct POS TF matrix and get vocab dict
 pos = pos_vectorizer.fit_transform(pd.Series(tweet_tags)).toarray()
+pos_test = pos_vectorizer.transform(pd.Series(tweet_tags_test)).toarray()
+
 pos_vocab = {v:i for i, v in enumerate(pos_vectorizer.get_feature_names())}
 
 # Now get other features
@@ -189,11 +208,15 @@ other_features_names = ["FKRA", "FRE","num_syllables", "avg_syl_per_word", "num_
                         "vader compound", "num_hashtags", "num_mentions", "num_urls", "is_retweet"]
 
 feats = get_feature_array(tweets)
+feats_test = get_feature_array(tweets_test)
+
 
 #Now join them all up
 M = np.concatenate([tfidf,pos,feats],axis=1)
+M_test = np.concatenate([tfidf_test,pos_test,feats_test],axis=1)
 
 M.shape
+M_test.shape
 
 #Finally get a list of variable names
 variables = ['']*len(vocab)
@@ -212,7 +235,11 @@ feature_names = variables+pos_variables+other_features_names
 X = pd.DataFrame(M)
 y = df['class'].astype(int)
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.1)
+X_test = pd.DataFrame(M_test)
+y_test = df_test['class'].astype(int)
+
+
+X_train, X_test_notused, y_train, y_test_notused = train_test_split(X, y, random_state=42, test_size=0)
 
 pipe = Pipeline(
         [('select', SelectFromModel(LogisticRegression(class_weight='balanced',
@@ -230,6 +257,13 @@ grid_search = GridSearchCV(pipe,
 model = grid_search.fit(X_train, y_train)
 
 y_preds = model.predict(X_test)
+y_probs = model.predict_proba(X_test)
+
+for c,result in enumerate(y_preds):
+    tweet_id = df_test['tweet_id'][c]
+    hate_prob = y_probs[c,0]
+    not_hate_prob = y_probs[c, 1]
+    out_file.write(str(tweet_id)+','+str(result)+','+str(hate_prob)+','+str(not_hate_prob)+'\n')
 
 # Evaluating the results
 report = classification_report( y_test, y_preds )
